@@ -99,9 +99,55 @@ set_cpu_settings() {
     echo "$max_freq" >"${cpu_path}/scaling_max_freq"
 }
 
+# Auto-resume after shutdown.
+# NextUI/MinUI read $SHARED_USERDATA_PATH/.minui/auto_resume.txt on boot
+# (nextui.c autoResume()): it holds the ROM path relative to $SDCARD_PATH,
+# is deleted as soon as it is read, and the ROM is relaunched through its
+# Emu Pak. minarch writes it in Menu_beforeSleep() and deletes it in
+# Menu_afterSleep(), so a normal quit to the menu never leaves it behind.
+AUTO_RESUME_PATH="$SHARED_USERDATA_PATH/.minui/auto_resume.txt"
+
+set_auto_resume() {
+    rom_path="$1"
+    case "$rom_path" in
+        "$SDCARD_PATH"/*) ;;
+        *) return ;;
+    esac
+    mkdir -p "$(dirname "$AUTO_RESUME_PATH")"
+    printf '%s' "${rom_path#"$SDCARD_PATH"}" >"$AUTO_RESUME_PATH"
+    sync
+}
+
+clear_auto_resume() {
+    rom_path="$1"
+    # Only remove the marker if it is ours.
+    if [ -f "$AUTO_RESUME_PATH" ] && [ "$(cat "$AUTO_RESUME_PATH")" = "${rom_path#"$SDCARD_PATH"}" ]; then
+        rm -f "$AUTO_RESUME_PATH"
+        sync
+    fi
+}
+
+# True if the device is powering off (rather than the user quitting PPSSPP).
+shutdown_in_progress() {
+    # Set by NextUI and by newer minui-power-control releases.
+    [ -f /tmp/poweroff ] && return 0
+    # minui-power-control runs its `shutdown` script (next to `suspend`),
+    # which kills the emulator and then stays alive until poweroff.
+    for proc in /proc/[0-9]*/cmdline; do
+        script=$(tr '\0' '\n' <"$proc" 2>/dev/null | grep '/shutdown$' | head -n 1)
+        if [ -n "$script" ] && [ -f "$(dirname "$script")/suspend" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 main() {
     echo "1" >/tmp/stay_awake
-    trap "cleanup" EXIT INT TERM HUP QUIT
+    trap "cleanup" EXIT
+    # A signal here means we are being torn down (e.g. by poweroff): exit
+    # without clearing the auto-resume marker.
+    trap "exit 1" INT TERM HUP QUIT
 
     if [ "$PLATFORM" = "tg3040" ] && [ -z "$DEVICE" ]; then
         export PLATFORM="tg5040"
@@ -154,9 +200,21 @@ main() {
     mkdir -p "$EMU_DIR/.config/ppsspp/PSP/PPSSPP_STATE"
     mount -o bind "$SHARED_USERDATA_PATH/PSP-ppsspp" "$EMU_DIR/.config/ppsspp/PSP/PPSSPP_STATE"
 
+    # Arm auto-resume before launching. If the device is powered off while
+    # PPSSPP is running, this script never gets to clear it and NextUI boots
+    # straight back into this game (PPSSPP then auto-loads the latest state).
+    set_auto_resume "$*"
+
     # Launch emulator
     minui-power-control "${PPSSPP_BIN}_${PLATFORM}" &
     "${PPSSPP_BIN}_${PLATFORM}" "$*" --fullscreen --pause-menu-exit
+
+    # PPSSPP exited. Keep the marker only if this is a power-off.
+    if shutdown_in_progress; then
+        echo "Shutdown detected, keeping auto-resume marker."
+    else
+        clear_auto_resume "$*"
+    fi
 }
 
 main "$@"
