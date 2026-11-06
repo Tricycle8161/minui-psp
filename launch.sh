@@ -99,9 +99,75 @@ set_cpu_settings() {
     echo "$max_freq" >"${cpu_path}/scaling_max_freq"
 }
 
+# Auto-resume after shutdown.
+# NextUI/MinUI read $SHARED_USERDATA_PATH/.minui/auto_resume.txt on boot
+# (autoResume()): it holds the ROM path relative to $SDCARD_PATH, is deleted
+# as soon as it is read, and the ROM is relaunched through its Emu Pak.
+# minarch writes it only right before it powers the device off, so a crash,
+# a forced power-off or a dead battery never resumes. We follow the same
+# rule: the marker is written only once a power-off has been positively
+# detected, never while the game is running.
+AUTO_RESUME_PATH="$SHARED_USERDATA_PATH/.minui/auto_resume.txt"
+# Written by NextUI/MinUI on an auto-resume (slot 9) for minarch, which reads
+# and deletes it. PPSSPP never reads it, so we remove it ourselves, otherwise
+# the next built-in core started in this boot would load its slot 9 state.
+RESUME_SLOT_PATH="/tmp/resume_slot.txt"
+
+set_auto_resume() {
+    rom_path="$1"
+    case "$rom_path" in
+        "$SDCARD_PATH"/*) ;;
+        *) return 1 ;;
+    esac
+    mkdir -p "$(dirname "$AUTO_RESUME_PATH")"
+    printf '%s' "${rom_path#"$SDCARD_PATH"}" >"$AUTO_RESUME_PATH.tmp" &&
+        mv -f "$AUTO_RESUME_PATH.tmp" "$AUTO_RESUME_PATH"
+    sync
+}
+
+# True if the device is powering off (rather than the user quitting PPSSPP).
+# Called once, right after PPSSPP exits.
+shutdown_in_progress() {
+    # Set by NextUI and by minui-power-control 3.0.0+.
+    [ -f /tmp/poweroff ] && return 0
+    # minui-power-control 1.x/2.x: button-handler runs its `shutdown` script
+    # by absolute path (/tmp/selfgz*/shutdown). That script kills the
+    # emulator first, then runs `poweroff` and sleeps until the system kills
+    # it, so it is always still alive when PPSSPP exits because of it. Match
+    # the command line only: the selfgz dir itself is deleted as soon as
+    # power-control's launcher notices the emulator is gone.
+    pgrep -f '/shutdown$|^([^ ]*/)?poweroff( |$)' >/dev/null 2>&1
+}
+
+# Arm auto-resume, then wait for the power-off to finish. We must not return
+# to NextUI/MinUI here: on its next start it would read (and delete) the
+# marker before the device is off.
+arm_auto_resume_and_wait() {
+    rom_path="$1"
+    set_auto_resume "$rom_path" || return 0
+    echo "Shutdown detected, auto-resume armed for $rom_path."
+    cleanup
+    # Signals are ignored by the caller; poweroff ends us with SIGKILL. If
+    # the device has not powered off after a minute, drop the marker and go
+    # back to the menu.
+    i=0
+    while [ "$i" -lt 60 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    echo "Device did not power off, removing auto-resume marker."
+    rm -f "$AUTO_RESUME_PATH"
+    sync
+}
+
 main() {
     echo "1" >/tmp/stay_awake
-    trap "cleanup" EXIT INT TERM HUP QUIT
+    trap "cleanup" EXIT
+    trap "exit 1" INT TERM HUP QUIT
+
+    # NextUI/MinUI already consumed the marker if this is an auto-resume.
+    # Drop the slot file meant for minarch, and any leftover marker.
+    rm -f "$RESUME_SLOT_PATH" "$AUTO_RESUME_PATH"
 
     if [ "$PLATFORM" = "tg3040" ] && [ -z "$DEVICE" ]; then
         export PLATFORM="tg5040"
@@ -157,6 +223,14 @@ main() {
     # Launch emulator
     minui-power-control "${PPSSPP_BIN}_${PLATFORM}" &
     "${PPSSPP_BIN}_${PLATFORM}" "$*" --fullscreen --pause-menu-exit
+
+    # PPSSPP exited. A SIGTERM from here on most likely comes from poweroff
+    # tearing everything down: finish the decision instead of dying halfway.
+    trap "" INT TERM HUP QUIT
+    if shutdown_in_progress; then
+        arm_auto_resume_and_wait "$*"
+    fi
+    trap "exit 1" INT TERM HUP QUIT
 }
 
 main "$@"
