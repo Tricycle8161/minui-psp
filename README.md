@@ -32,7 +32,7 @@ Note: The `<PLATFORM>` folder name is based on the name of your device. For exam
 
 Deep sleep is supported on compatible devices. Click the power button to enter deep sleep. Click again to resume the game. To shut down, hold the power button for 2 seconds. For more information and issues, see [MinUI Power Control](https://github.com/ben16w/minui-power-control).
 
-If the device is shut down while a game is running, it boots straight back into that game the next time it is turned on, the same way NextUI/MinUI auto-resume works for built-in emulators. Quitting the game to the menu as usual (via the PPSSPP menu) does not trigger this.
+If the device is shut down with the power button (hold for 2 seconds) while a game is running, it boots straight back into that game the next time it is turned on, the same way NextUI/MinUI auto-resume works for built-in emulators. Quitting the game to the menu as usual (via the PPSSPP menu) does not trigger this, and neither does a crash, a forced power-off of a frozen device or a flat battery: like the built-in emulators, the game is only resumed after a normal shutdown.
 
 **Note:** Shutdown does not create a new save state. On resume, PPSSPP loads the most recent save state of the game (`AutoLoadSaveState`), so any progress since your last save state or in-game save will be lost. Make a save state before shutting down if you want to continue exactly where you left off.
 
