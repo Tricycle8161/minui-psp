@@ -41,6 +41,11 @@ src/stb_image.h:
 bin/jpg2bmp: src/jpg2bmp.c src/stb_image.h
 	mkdir -p bin
 	$(CC) -Os -s -static -o bin/jpg2bmp src/jpg2bmp.c
+	@if ! file bin/jpg2bmp | grep -q 'ARM aarch64'; then \
+		echo "bin/jpg2bmp is not an aarch64 binary ($$(file -b bin/jpg2bmp)). Build on aarch64 or pass CC=aarch64-linux-gnu-gcc." >&2; \
+		rm -f bin/jpg2bmp; \
+		exit 1; \
+	fi
 	chmod +x bin/jpg2bmp
 
 PPSSPP/libstdc++.so.6:

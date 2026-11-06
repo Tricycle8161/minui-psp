@@ -13,6 +13,10 @@
 #define STBI_ONLY_PNG
 #define STBI_NO_LINEAR
 #define STBI_NO_HDR
+/* Save-state thumbnails are tiny; anything bigger than this is rejected. 8192x8192 keeps
+ * stride * h + 54 well below 2^32 (8192 * 3 * 8192 = 201326592). */
+#define MAX_DIM 8192
+#define STBI_MAX_DIMENSIONS MAX_DIM
 #include "stb_image.h"
 
 #include <stdint.h>
@@ -29,12 +33,28 @@ int main(int argc, char **argv) {
 	}
 
 	int w, h, n;
+	/* Check the size before decoding, so a huge image is rejected without allocating it. */
+	if (!stbi_info(argv[1], &w, &h, &n)) {
+		fprintf(stderr, "jpg2bmp: cannot read %s: %s\n", argv[1], stbi_failure_reason());
+		return 1;
+	}
+	if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM) {
+		fprintf(stderr, "jpg2bmp: %s is %dx%d, larger than %dx%d\n", argv[1], w, h, MAX_DIM, MAX_DIM);
+		return 1;
+	}
+
 	unsigned char *px = stbi_load(argv[1], &w, &h, &n, 3);
 	if (!px) {
 		fprintf(stderr, "jpg2bmp: cannot decode %s: %s\n", argv[1], stbi_failure_reason());
 		return 1;
 	}
+	if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM) { /* file changed since stbi_info */
+		fprintf(stderr, "jpg2bmp: %s has an unsupported size\n", argv[1]);
+		stbi_image_free(px);
+		return 1;
+	}
 
+	/* With w, h <= MAX_DIM these cannot overflow 32 bits (the BMP header fields). */
 	uint32_t stride = ((uint32_t)w * 3 + 3) & ~3u;
 	uint32_t data_size = stride * (uint32_t)h;
 	unsigned char hdr[54] = {0};
