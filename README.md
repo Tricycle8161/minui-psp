@@ -37,6 +37,18 @@ Deep sleep is supported on compatible devices. Click the power button to enter d
 - Save states are stored in the `/.userdata/shared/PSP-ppsspp/` directory.
 - Game saves are stored in the `/Saves/PSP/` directory.
 
+## Game Switcher Image
+
+When PPSSPP exits (or the device powers off while it runs), the pak writes the image NextUI's Game Switcher shows for the game to `/.userdata/shared/.minui/PSP/<rom file>.<slot>.bmp`. It uses the best available source, and later replaces a weaker one with a better one:
+
+1. The thumbnail of the game's newest save state (converted from PPSSPP's JPEG with the bundled `jpg2bmp`). Only save states written while that game ran are considered, so another game's state is never shown.
+2. The ROM's boxart at `/Roms/PlayStation Portable (PSP)/.media/<rom name>.png`.
+3. A generic PSP placeholder.
+
+The pak keeps a small record of which source it used (and the game's save-state ID) in `/.userdata/shared/.minui/PSP/.ppsspp/`.
+
+Because this image exists, NextUI also offers **Resume** for the game. PPSSPP handles resuming itself: the pak ships with `AutoLoadSaveState = 2`, so every launch loads the game's newest save state (the one shown in the Game Switcher). If you turn auto-load off in PPSSPP, choosing Resume in NextUI still loads that newest state. A game without save states simply starts from the beginning.
+
 ## PPSSPP Configuration
 
 The PPSSPP configuration directory is located at `/Emus/<PLATFORM>/PSP.pak/PPSSPP/.config/ppsspp/`. This directory contains:
