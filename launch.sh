@@ -99,6 +99,73 @@ set_cpu_settings() {
     echo "$max_freq" >"${cpu_path}/scaling_max_freq"
 }
 
+# Game switcher preview.
+# NextUI's game switcher shows $SHARED_USERDATA_PATH/.minui/<EMU>/<rom file>.<slot>.bmp,
+# but only when $SHARED_USERDATA_PATH/.minui/<EMU>/<rom file>.txt exists and holds <slot>
+# (see readyResumePath() in NextUI's nextui.c). The image is opened with IMG_Load, so the
+# content may be BMP or PNG regardless of the .bmp name (minarch itself writes PNG there).
+# The stock TrimUI SDL2_image cannot decode JPEG, so PPSSPP's save-state thumbnails are
+# converted to BMP with the bundled jpg2bmp.
+PREVIEW_MARKER="$USERDATA_PATH/PSP-ppsspp/.preview-marker"
+
+write_game_switcher_preview() {
+    rom_path="$1"
+    case "$rom_path" in
+    "$ROMS_PATH"/*) ;;
+    *) return 0 ;;
+    esac
+
+    # Same logic as NextUI's getEmuName(): Roms folder name, then the text in its last (...)
+    emu_tag="${rom_path#"$ROMS_PATH"/}"
+    emu_tag="${emu_tag%%/*}"
+    case "$emu_tag" in
+    *"("*")"*)
+        emu_tag="${emu_tag##*(}"
+        emu_tag="${emu_tag%%)*}"
+        ;;
+    esac
+
+    rom_file="$(basename "$rom_path")"
+    minui_dir="$SHARED_USERDATA_PATH/.minui/$emu_tag"
+    slot_file="$minui_dir/$rom_file.txt"
+    mkdir -p "$minui_dir" || return 0
+
+    # Reuse the slot if something already wrote one, otherwise point NextUI at slot 0.
+    slot=""
+    [ -f "$slot_file" ] && slot="$(head -n 1 "$slot_file" | tr -cd '0-9')"
+    if [ -z "$slot" ]; then
+        slot=0
+        printf '%s' "$slot" >"$slot_file"
+    fi
+    preview="$minui_dir/$rom_file.$slot.bmp"
+
+    # 1. Newest PPSSPP save-state thumbnail written during this session.
+    thumb=""
+    for jpg in "$SHARED_USERDATA_PATH/PSP-ppsspp/"*.jpg; do
+        case "$jpg" in *undo*) continue ;; esac
+        [ -f "$jpg" ] || continue
+        if [ -z "$thumb" ] || [ "$jpg" -nt "$thumb" ]; then
+            thumb="$jpg"
+        fi
+    done
+    if [ -n "$thumb" ] && [ "$thumb" -nt "$PREVIEW_MARKER" ] &&
+        jpg2bmp "$thumb" "$preview.tmp" && mv -f "$preview.tmp" "$preview"; then
+        echo "Game switcher preview from save state: $thumb"
+        return 0
+    fi
+    rm -f "$preview.tmp"
+
+    # 2. Keep an existing preview, else use the ROM's boxart, else a generic placeholder.
+    [ -f "$preview" ] && return 0
+    rom_name="${rom_file%.*}"
+    boxart="$(dirname "$rom_path")/.media/$rom_name.png"
+    if [ -f "$boxart" ]; then
+        cp -f "$boxart" "$preview"
+    else
+        cp -f "$PAK_DIR/res/game-switcher-placeholder.png" "$preview"
+    fi
+}
+
 main() {
     echo "1" >/tmp/stay_awake
     trap "cleanup" EXIT INT TERM HUP QUIT
@@ -154,9 +221,13 @@ main() {
     mkdir -p "$EMU_DIR/.config/ppsspp/PSP/PPSSPP_STATE"
     mount -o bind "$SHARED_USERDATA_PATH/PSP-ppsspp" "$EMU_DIR/.config/ppsspp/PSP/PPSSPP_STATE"
 
+    touch "$PREVIEW_MARKER"
+
     # Launch emulator
     minui-power-control "${PPSSPP_BIN}_${PLATFORM}" &
     "${PPSSPP_BIN}_${PLATFORM}" "$*" --fullscreen --pause-menu-exit
+
+    write_game_switcher_preview "$1"
 }
 
 main "$@"

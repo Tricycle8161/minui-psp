@@ -3,15 +3,19 @@ PAK_NAME := $(shell jq -r .name pak.json)
 MINUI_POWER_CONTROL_VERSION := 1.1.0
 PPSSPP_RELEASE_URL := https://github.com/ben16w/PPSSPP-spruce/releases/download/beta-main
 SPRUCEOS_PSP_URL := https://raw.githubusercontent.com/spruceUI/spruceOS/main/Emu/PSP
+STB_COMMIT := d14d46f6b44456eb88beac58cba833a4135d4c89
+
+# bin/jpg2bmp must be an aarch64 binary. CI builds natively on ubuntu-24.04-arm;
+# when building elsewhere pass a cross compiler, e.g. CC=aarch64-linux-gnu-gcc.
 
 clean:
-	rm -f bin/minui-power-control bin/setalpha PPSSPP/PPSSPPSDL_tg5040 PPSSPP/PPSSPPSDL_tg5050 PPSSPP/libstdc++.so.6
+	rm -f bin/minui-power-control bin/setalpha bin/jpg2bmp PPSSPP/PPSSPPSDL_tg5040 PPSSPP/PPSSPPSDL_tg5050 PPSSPP/libstdc++.so.6 src/stb_image.h
 
 bump-version:
 	jq '.version = "$(RELEASE_VERSION)"' pak.json > pak.json.tmp
 	mv pak.json.tmp pak.json
 
-build: bin/minui-power-control bin/setalpha PPSSPP/PPSSPPSDL_tg5040 PPSSPP/PPSSPPSDL_tg5050 PPSSPP/libstdc++.so.6
+build: bin/minui-power-control bin/setalpha bin/jpg2bmp PPSSPP/PPSSPPSDL_tg5040 PPSSPP/PPSSPPSDL_tg5050 PPSSPP/libstdc++.so.6
 	@echo "Build complete"
 
 bin/minui-power-control:
@@ -30,6 +34,14 @@ PPSSPP/PPSSPPSDL_tg5050:
 bin/setalpha:
 	curl -f -o bin/setalpha -sSL $(SPRUCEOS_PSP_URL)/setalpha
 	chmod +x bin/setalpha
+
+src/stb_image.h:
+	curl -f -o src/stb_image.h -sSL https://raw.githubusercontent.com/nothings/stb/$(STB_COMMIT)/stb_image.h
+
+bin/jpg2bmp: src/jpg2bmp.c src/stb_image.h
+	mkdir -p bin
+	$(CC) -Os -s -static -o bin/jpg2bmp src/jpg2bmp.c
+	chmod +x bin/jpg2bmp
 
 PPSSPP/libstdc++.so.6:
 	curl -f -o PPSSPP/libstdc++.so.6 -sSL $(SPRUCEOS_PSP_URL)/libstdc%2B%2B.so.6
